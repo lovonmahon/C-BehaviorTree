@@ -1,8 +1,8 @@
-#include<iostream>
-#include<memory>
-#include<chrono>
-#include<thread>
-#include<functional>
+#include <iostream>
+#include <memory>
+#include <chrono>
+#include <thread>
+#include <functional>
 
 enum class Status
 {
@@ -151,7 +151,9 @@ private:
     std::vector<std::unique_ptr<Node>> m_childrenVec;
 };
 
-/// The entrance node only runs once before the tree runs
+/// The entrance node runs once per tick
+/// and ticks the child node(main selector node)
+///  This tick cascades down to all nodes down the hierarchy
 class Entrance : public Node
 {
 public:
@@ -169,14 +171,35 @@ private:
 class Repeater : public Node
 {
 public:
-    explicit Repeater(std::unique_ptr<Node> child, int simTime) : m_child(std::move(child)), m_tick(simTime){};
+    explicit Repeater(std::unique_ptr<Node> child, int simTimeInSeconds, int tickInMilliseconds) : m_child(std::move(child)), m_simSeconds(simTimeInSeconds), m_tickIntervalMs(tickInMilliseconds){};
     Status run() override
     {
-        return m_child->run();
+        
+        using std::chrono::steady_clock;
+        using std::chrono::seconds;
+        using std::chrono::milliseconds;
+
+        
+        steady_clock::time_point startTime = steady_clock::now();
+        steady_clock::time_point endTime   = startTime + seconds(m_simSeconds);
+
+        while(steady_clock::now() < endTime)
+        {
+            m_child->run();
+            std::this_thread::sleep_for(milliseconds(m_tickIntervalMs));
+        }
+        return Status::Success;
+    }
+    /// for switching to a different ticker 
+    std::unique_ptr<Node> release_child() 
+    {
+        /// transfer ownership of the child node to a different repeater for ticking when needed
+        return std::move(m_child); 
     }
 private:
     std::unique_ptr<Node> m_child;
-    int m_tick;
+    int m_simSeconds; // seconds
+    int m_tickIntervalMs; // milliseconds
 };
 
 /// driver
@@ -213,23 +236,22 @@ int main()
     /// Entrance node
     std::unique_ptr<Entrance> entranceNode = std::make_unique<Entrance>(std::move(mainselector));
 
-    int tickTime(1);
-    std::unique_ptr<Repeater> repeaterNode  = std::make_unique<Repeater>(std::move(entranceNode), tickTime);
+    /// Run for 5 seconds at 10 ticks per second
+    int simSeconds = 5;
+    /// Tick 0.1 seconds(100 ms)
+    int tickIntervalMs = 1000;
+    std::unique_ptr<Repeater> repeaterNode  = std::make_unique<Repeater>(std::move(entranceNode), simSeconds, tickIntervalMs);
 
-    int numFramesRun = 0;
-    int timeFrameOfBearEncounter = 5;
-
-    while(numFramesRun < timeFrameOfBearEncounter)
-    {
-        numFramesRun++;
-        repeaterNode->run();
-        if(numFramesRun == timeFrameOfBearEncounter)
-        {
-            bearVisible = true;
-        }
-    }
     repeaterNode->run();
+
+    bearVisible = true;
+
+    int extendedSimSeconds = 1;
+    std::unique_ptr<Repeater> shortRepeaterNode  = std::make_unique<Repeater>(repeaterNode->release_child(), extendedSimSeconds, tickIntervalMs);
+    shortRepeaterNode->run();
     std::cout << "Running program.\n";
 
     return 0;
 }
+
+
